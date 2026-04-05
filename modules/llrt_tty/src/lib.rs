@@ -46,6 +46,12 @@ static SAVED_TERMIOS: std::sync::Mutex<[Option<libc::termios>; 3]> =
 // rather than applying generic sane defaults that may differ from the original.
 #[cfg(unix)]
 fn set_raw_mode(fd: i32, enable: bool) -> bool {
+    // Only stdin/stdout/stderr are tracked in SAVED_TERMIOS. Reject any other
+    // fd up front so we never succeed at enabling raw mode without a slot to
+    // save the original termios into — which would make disable impossible.
+    if fd < 0 || fd > 2 {
+        return false;
+    }
     let mut termios: libc::termios = unsafe { std::mem::zeroed() };
     if unsafe { libc::tcgetattr(fd, &mut termios) } != 0 {
         return false;
@@ -73,8 +79,15 @@ fn set_raw_mode(fd: i32, enable: bool) -> bool {
         // would be a worse outcome than proceeding with whatever state we have.
         let mut saved = SAVED_TERMIOS.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(slot) = saved.get_mut(fd as usize) {
-            if let Some(original) = slot.take() {
-                return unsafe { libc::tcsetattr(fd, libc::TCSANOW, &original) } == 0;
+            if let Some(original) = *slot {
+                // Only clear the snapshot after a successful restore; if
+                // tcsetattr fails the original is still in the slot so a
+                // retry remains possible.
+                if unsafe { libc::tcsetattr(fd, libc::TCSANOW, &original) } == 0 {
+                    *slot = None;
+                    return true;
+                }
+                return false;
             }
         }
     }
@@ -115,7 +128,10 @@ fn write_fd(fd: i32, bytes: &[u8]) -> std::io::Result<()> {
 
 #[cfg(not(unix))]
 fn write_fd(_fd: i32, _bytes: &[u8]) -> std::io::Result<()> {
-    Ok(())
+    Err(std::io::Error::new(
+        std::io::ErrorKind::Unsupported,
+        "tty.WriteStream.write is not supported on this platform",
+    ))
 }
 
 // ── WriteStream ───────────────────────────────────────────────────────────────
