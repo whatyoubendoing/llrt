@@ -1,10 +1,12 @@
 // Copyright Amazon.com, Inc. or its affiliates. All Rights Reserved.
 // SPDX-License-Identifier: Apache-2.0
-use std::{env, result::Result as StdResult};
+#[cfg(any(feature = "fetch", feature = "net"))]
+use std::env;
+use std::result::Result as StdResult;
 
 #[cfg(any(feature = "fetch", feature = "net"))]
 use crate::environment::{ENV_LLRT_NET_ALLOW, ENV_LLRT_NET_DENY};
-#[cfg(any(feature = "fetch", feature = "net"))]
+#[cfg(feature = "fetch")]
 use hyper::{http::uri::InvalidUri, Uri};
 
 pub fn init() -> StdResult<(), Box<dyn std::error::Error + Send + Sync>> {
@@ -30,7 +32,7 @@ pub fn init() -> StdResult<(), Box<dyn std::error::Error + Send + Sync>> {
     Ok(())
 }
 
-#[cfg(any(feature = "fetch", feature = "net"))]
+#[cfg(feature = "fetch")]
 fn build_http_access_list(list: &[String]) -> StdResult<Vec<Uri>, InvalidUri> {
     list.iter()
         .flat_map(|entry| {
