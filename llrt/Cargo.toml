@@ -5,7 +5,7 @@ edition = "2021"
 license-file = "LICENSE"
 
 [features]
-default = ["macro", "tls-ring", "crypto-rust"]
+default = ["macro", "tls-ring", "crypto-rust", "process"]
 macro = ["llrt_core/macro"]
 lambda = ["llrt_core/lambda"]
 no-sdk = ["llrt_core/no-sdk"]
@@ -28,6 +28,12 @@ crypto-openssl = ["llrt_core/crypto-openssl"]
 
 # OpenSSL vendored (builds OpenSSL from source)
 openssl-vendored = ["llrt_core/openssl-vendored"]
+
+# Module feature forwarding
+https = ["llrt_core/https"]
+https-http1 = ["llrt_core/https-http1"]
+https-http2 = ["llrt_core/https-http2"]
+process = ["llrt_core/process"]
 
 [dependencies]
 constcat = { version = "0.6", default-features = false }
