@@ -130,6 +130,14 @@ async fn main() -> Result<ExitCode, Box<dyn Error + Send + Sync>> {
         {
             start_runtime(&vm).await;
             vm.idle().await?;
+            // Fire process.on('exit') listeners before the runtime is freed,
+            // matching the behaviour of the CLI path below.
+            #[cfg(feature = "process")]
+            vm.run_with(|ctx| {
+                run_exit_listeners(ctx);
+                Ok(())
+            })
+            .await;
             #[cfg(feature = "process")]
             return Ok(ExitCode::from(EXIT_CODE.load(Ordering::Relaxed)));
             #[cfg(not(feature = "process"))]

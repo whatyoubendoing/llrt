@@ -122,6 +122,10 @@ fn exit(ctx: Ctx<'_>, code: Value<'_>) -> Result<()> {
         None => EXIT_CODE.load(Ordering::Relaxed),
     };
 
+    // Store the exit code before running listeners so that process.exitCode
+    // returns the correct value if a listener reads it during execution.
+    EXIT_CODE.store(exit_code, Ordering::Relaxed);
+
     // Drain and call all registered exit listeners. We drain rather than iterate
     // so that each listener is dropped (and GC-released) after it runs. Errors
     // from individual listeners are printed to stderr so all listeners run
@@ -131,12 +135,10 @@ fn exit(ctx: Ctx<'_>, code: Value<'_>) -> Result<()> {
         std::mem::take(&mut guard.0)
     };
     for listener in listeners {
-        let f = listener
-            .func
-            .restore(&ctx)
-            .expect("exit listener GC'd unexpectedly");
-        if let Err(err) = f.call::<(u32,), ()>((exit_code as u32,)) {
-            eprintln!("process exit listener error: {err}");
+        if let Ok(f) = listener.func.restore(&ctx) {
+            if let Err(err) = f.call::<(u32,), ()>((exit_code as u32,)) {
+                eprintln!("process exit listener error: {err}");
+            }
         }
     }
 
@@ -277,8 +279,9 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     // WriteStream and ReadStream use synchronous libc writes so output is
     // immediately visible even when process.exit() is called right after.
     // WriteStream also exposes .columns / .rows / .isTTY / .setRawMode().
-    Class::<WriteStream>::define(&ctx.globals())?;
-    Class::<ReadStream>::define(&ctx.globals())?;
+    // The constructors are intentionally NOT registered on globalThis —
+    // they are internal implementation details exposed only via process.stdin/
+    // stdout/stderr.
 
     let stdout_stream = Class::instance(ctx.clone(), WriteStream::new(1))?;
     process.set("stdout", stdout_stream)?;
@@ -292,9 +295,11 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     // ── process.on / process.off ───────────────────────────────────────────
     // Exit listeners are stored in a Rust-side static Vec (EXIT_LISTENERS) so
     // they are invisible to JS code and cannot be tampered with via globalThis.
+    // All event-registration methods return the process object for chaining,
+    // matching the Node.js EventEmitter contract.
 
     // process.on / process.addListener — persists the listener for every exit.
-    fn on_fn<'js>(ctx: Ctx<'js>, event: String, cb: Function<'js>) -> Result<()> {
+    fn on_fn<'js>(ctx: Ctx<'js>, event: String, cb: Function<'js>) -> Result<Value<'js>> {
         if event == "exit" {
             let mut guard = EXIT_LISTENERS.lock().unwrap_or_else(|e| e.into_inner());
             // Warn at Node.js default max-listener threshold.
@@ -311,7 +316,8 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
             });
         }
         // Other events (SIGINT, uncaughtException, etc.) are silently accepted.
-        Ok(())
+        // Return the process object so callers can chain: process.on(...).on(...)
+        ctx.globals().get("process")
     }
     let process_on = Function::new(ctx.clone(), on_fn)?;
     process.set("on", process_on.clone())?;
@@ -321,7 +327,7 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
     // The `once` flag is stored alongside the Persistent<Function> in the
     // ExitListener struct so no wrapper closure (and no nested Persistent) is
     // needed — avoiding the JS GC leak that a nested Persistent would cause.
-    fn once_fn<'js>(ctx: Ctx<'js>, event: String, cb: Function<'js>) -> Result<()> {
+    fn once_fn<'js>(ctx: Ctx<'js>, event: String, cb: Function<'js>) -> Result<Value<'js>> {
         if event == "exit" {
             let mut guard = EXIT_LISTENERS.lock().unwrap_or_else(|e| e.into_inner());
             if guard.0.len() >= 128 {
@@ -336,31 +342,29 @@ pub fn init(ctx: &Ctx<'_>) -> Result<()> {
                 _once: true,
             });
         }
-        Ok(())
+        ctx.globals().get("process")
     }
     process.set("once", Function::new(ctx.clone(), once_fn)?)?;
 
     // process.off / process.removeListener — removes the first listener whose
     // JS identity (raw JSValue pointer) matches `cb`.
-    fn off_fn<'js>(ctx: Ctx<'js>, event: String, cb: Function<'js>) -> Result<()> {
-        if event != "exit" {
-            return Ok(());
-        }
-        let mut guard = EXIT_LISTENERS.lock().unwrap_or_else(|e| e.into_inner());
+    fn off_fn<'js>(ctx: Ctx<'js>, event: String, cb: Function<'js>) -> Result<Value<'js>> {
+        if event == "exit" {
+            let mut guard = EXIT_LISTENERS.lock().unwrap_or_else(|e| e.into_inner());
 
-        let cb_val: Value<'js> = cb.into_value();
-        if let Some(idx) = guard.0.iter().position(|listener: &ExitListener| {
-            listener
-                .func
-                .clone()
-                .restore(&ctx)
-                .map(|f| f.into_value() == cb_val)
-                .unwrap_or(false)
-        }) {
-            guard.0.remove(idx);
+            let cb_val: Value<'js> = cb.into_value();
+            if let Some(idx) = guard.0.iter().position(|listener: &ExitListener| {
+                listener
+                    .func
+                    .clone()
+                    .restore(&ctx)
+                    .map(|f| f.into_value() == cb_val)
+                    .unwrap_or(false)
+            }) {
+                guard.0.remove(idx);
+            }
         }
-
-        Ok(())
+        ctx.globals().get("process")
     }
     let process_off = Function::new(ctx.clone(), off_fn)?;
     process.set("removeListener", process_off.clone())?;
