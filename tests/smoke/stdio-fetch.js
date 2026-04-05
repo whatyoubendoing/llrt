@@ -5,7 +5,7 @@
  *   ./target/release/llrt tests/smoke/stdio-fetch.js
  *
  * Exit code 0 = all checks passed.
- * Any failing assertion throws, causing LLRT to print the error and exit 1.
+ * Failed assertions are counted; the script exits non-zero at the end if any failed.
  */
 
 import net from "node:net";
@@ -116,6 +116,29 @@ process.once("exit", () => {
   onceCount++;
 });
 
+// Validate removedFired and onceCount inside a final exit listener so the
+// assertions run after all other listeners have executed.
+process.on("exit", () => {
+  if (removedFired) {
+    process.stderr.write(
+      "  FAIL  process.off: removed listener still fired on exit\n"
+    );
+    process.exitCode = 1;
+  } else {
+    process.stdout.write(
+      "  PASS  process.off: removed listener did not fire\n"
+    );
+  }
+  if (onceCount !== 1) {
+    process.stderr.write(
+      "  FAIL  process.once: expected onceCount=1 but got " + onceCount + "\n"
+    );
+    process.exitCode = 1;
+  } else {
+    process.stdout.write("  PASS  process.once: fired exactly once\n");
+  }
+});
+
 assert(typeof process.on === "function", "process.on is a function");
 assert(typeof process.off === "function", "process.off is a function");
 assert(typeof process.once === "function", "process.once is a function");
@@ -171,13 +194,20 @@ const server = net.createServer((socket) => {
   });
 });
 
-await new Promise((resolve) => server.listen(resolve));
+await new Promise((resolve, reject) => {
+  server.once("error", reject);
+  server.listen(0, "127.0.0.1", resolve);
+});
 
-const { address, port } = server.address();
-const url = "http://" + (address === "::" ? "127.0.0.1" : address) + ":" + port;
+const { port } = server.address();
+const url = "http://127.0.0.1:" + port;
+
+const controller = new AbortController();
+const fetchTimeout = setTimeout(() => controller.abort(), 5000);
 
 try {
-  const res = await fetch(url);
+  const res = await fetch(url, { signal: controller.signal });
+  clearTimeout(fetchTimeout);
   assertEq(res.status, 200, "fetch: response status is 200");
   const body = await res.text();
   assertEq(body, "hello", "fetch: response body is 'hello'");
@@ -186,6 +216,7 @@ try {
     "fetch: Content-Type starts with text/plain"
   );
 } catch (e) {
+  clearTimeout(fetchTimeout);
   process.stderr.write("  FAIL  fetch threw: " + e + "\n");
   failed++;
 } finally {
