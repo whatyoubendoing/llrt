@@ -39,7 +39,7 @@ openssl-vendored = ["dep:openssl", "openssl/vendored"]
 # Certificate verification backends (pick one)
 webpki-roots = ["llrt_fetch?/webpki-roots", "llrt_http?/webpki-roots"]
 native-roots = ["llrt_fetch?/native-roots", "llrt_http?/native-roots"]
-platform-verifier = ["llrt_fetch?/platform-verifier", "llrt_http?/platform-verifier"]
+platform-verifier = ["llrt_fetch?/platform-verifier", "llrt_http?/platform-verifier", "llrt_tls?/platform-verifier"]
 
 base = [
   "abort",

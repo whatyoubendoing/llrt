@@ -158,7 +158,12 @@ pub fn build_client_config(
         builder.with_root_certificates(root_certificates)
     } else {
         #[cfg(feature = "platform-verifier")]
-        {
+        // Only use the platform verifier when no extra CA certs are registered.
+        // rustls_platform_verifier::Verifier delegates entirely to the OS trust
+        // store and has no API for appending additional anchors. If extra certs
+        // are present (e.g. a private PKI) we fall through to the standard
+        // RootCertStore path below so those certs are honoured.
+        if get_extra_ca_certs().is_none() {
             // SAFETY: dangerous() is required by rustls-platform-verifier because its
             // Verifier implements ServerCertVerifier using the OS trust store rather than
             // a bundled root set. rustls exposes this path through dangerous() to signal
@@ -174,7 +179,6 @@ pub fn build_client_config(
                 .with_no_client_auth());
         }
 
-        #[cfg(not(feature = "platform-verifier"))]
         {
             let mut root_certificates = RootCertStore::empty();
 
