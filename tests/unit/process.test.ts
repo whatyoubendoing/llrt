@@ -2,7 +2,7 @@ import process from "node:process";
 
 import defaultImport from "node:process";
 import legacyImport from "process";
-
+import { spawnCapture } from "./test-utils";
 it("node:process should be the same as process", () => {
   expect(defaultImport).toStrictEqual(legacyImport);
 });
@@ -89,8 +89,6 @@ it("__exit_listeners is not accessible from JS (Rust-side only)", () => {
 // These tests use spawnCapture so that exit-listener side-effects (writes to
 // stderr) can be observed from outside the process being tested.
 
-import { spawnCapture } from "./test-utils";
-
 const LLRT = process.argv[0];
 
 it("process.on: multiple listeners are all called on exit", async () => {
@@ -120,7 +118,7 @@ it("process.off: removed listener is not called on exit", async () => {
   expect(stderr).not.toContain("SHOULD-NOT-FIRE");
 });
 
-it("process.once: callback fires exactly once even if triggered twice", async () => {
+it("process.once: callback fires exactly once", async () => {
   const { stderr } = await spawnCapture(LLRT, [
     "-e",
     `
