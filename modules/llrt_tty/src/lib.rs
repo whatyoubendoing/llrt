@@ -52,12 +52,18 @@ fn set_raw_mode(fd: i32, enable: bool) -> bool {
     }
     if enable {
         // Capture the original termios before mutating it, so disable can
-        // restore it exactly. Only track fds 0-2 (stdin/stdout/stderr).
+        // restore it exactly. Only save when the slot is empty; a second
+        // setRawMode(true) call must not overwrite the saved original with
+        // an already-raw termios, which would make setRawMode(false) restore
+        // raw mode instead of the true original.
+        // Only track fds 0-2 (stdin/stdout/stderr).
         // Recover a poisoned mutex guard rather than silently skipping the save,
         // which would leave us unable to restore the original termios on disable.
         let mut saved = SAVED_TERMIOS.lock().unwrap_or_else(|e| e.into_inner());
         if let Some(slot) = saved.get_mut(fd as usize) {
-            *slot = Some(termios);
+            if slot.is_none() {
+                *slot = Some(termios);
+            }
         }
         unsafe { libc::cfmakeraw(&mut termios) };
     } else {
@@ -139,13 +145,15 @@ impl WriteStream {
 
     #[qjs(get)]
     pub fn columns(&self) -> u32 {
-        // Delegates to getWindowSize so both dimensions come from a single ioctl.
+        // Each getter makes its own ioctl call. Use getWindowSize() when you
+        // need both dimensions to avoid issuing two ioctls.
         get_window_size(self.fd).0 as u32
     }
 
     #[qjs(get)]
     pub fn rows(&self) -> u32 {
-        // Delegates to getWindowSize so both dimensions come from a single ioctl.
+        // Each getter makes its own ioctl call. Use getWindowSize() when you
+        // need both dimensions to avoid issuing two ioctls.
         get_window_size(self.fd).1 as u32
     }
 
